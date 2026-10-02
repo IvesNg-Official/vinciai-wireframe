@@ -6,9 +6,16 @@
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
   var ICONS = window.WF_ICONS || {};
 
+  /* remember which elements have a click handler (used by the green/red annotation) */
+  var LIVE = new WeakSet(), _add = EventTarget.prototype.addEventListener;
+  EventTarget.prototype.addEventListener = function (type, fn, opts) {
+    if (type === 'click' && this instanceof Element) LIVE.add(this);
+    return _add.call(this, type, fn, opts);
+  };
+
   /* ---------- routing ---------- */
   var ROUTES = {
-    '/': 'home.html',
+    '/': 'index.html',
     '/management/timeslots': 'management-timeslots.html',
     '/calendar/day-system': 'calendar-day-system.html',
     '/calendar/new': 'calendar-new.html',
@@ -16,7 +23,7 @@
     '/management/import-center': 'management-import-center.html'
   };
   var file = decodeURIComponent(location.pathname.split('/').pop() || '');
-  var PAGE = { 'home.html': 'home', 'management-timeslots.html': 'timeslots', 'calendar-day-system.html': 'daysystem', 'calendar-new.html': 'newevent', 'calendar-edit.html': 'editevent', 'lms-timetable.html': 'timetable', 'management-import-center.html': 'importcenter' }[file] || '';
+  var PAGE = { 'index.html': 'home', 'home.html': 'home', '': 'home', 'management-timeslots.html': 'timeslots', 'calendar-day-system.html': 'daysystem', 'calendar-new.html': 'newevent', 'calendar-edit.html': 'editevent', 'lms-timetable.html': 'timetable', 'management-import-center.html': 'importcenter' }[file] || '';
 
   /* ---------- helpers ---------- */
   function h(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
@@ -678,10 +685,53 @@
     else toast('「' + (a.textContent.trim() || path) + '」頁面不在此線框圖範圍內');
   });
 
+  /* ---------- annotation: green = clickable / has a feature, red = no feature or no link ---------- */
+  var ANNOT_CSS =
+    'body.wf-annot [data-wf-state=live]{background-image:none!important;background-color:rgba(34,197,94,.18)!important;box-shadow:inset 0 0 0 1.5px #16a34a!important;color:#14532d!important}' +
+    'body.wf-annot [data-wf-state=dead]{background-image:none!important;background-color:rgba(239,68,68,.16)!important;box-shadow:inset 0 0 0 1.5px #dc2626!important;color:#7f1d1d!important}' +
+    'body.wf-annot aside [data-wf-state=live]{background-color:rgba(34,197,94,.28)!important;color:#bbf7d0!important}' +
+    'body.wf-annot aside [data-wf-state=dead]{background-color:rgba(239,68,68,.28)!important;color:#fecaca!important}' +
+    '.wf-legend{position:fixed;left:12px;bottom:12px;z-index:9500;display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #cbd5e1;border-radius:999px;padding:6px 12px;font-size:12px;color:#334155;box-shadow:0 4px 12px rgba(0,0,0,.2)}' +
+    '.wf-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px}.wf-legend button{border:0;background:#e2e8f0;border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer}';
+  var SPECIAL_LINKS = [/bell-schedules\/(new|\d+\/edit)$/, /day-system\/\d+\/edit$/, /day-system\/days/, /day-system\/import/];
+  var SPECIAL_BTNS = '[data-wf-exc-del],[data-wf-exc-edit],[data-testid=bell-delete],[data-testid=day-system-delete]';
+  function linkLive(a) {
+    var href = a.getAttribute('href') || '';
+    if (!href || href === '#') return false;
+    if (a.hasAttribute('download') || /^(blob:|mailto:|https?:)/.test(href)) return true;
+    var path = href.split('?')[0].split('#')[0];
+    if (/\.html$/.test(path) || ROUTES[path]) return true;
+    return PAGE === 'daysystem' && SPECIAL_LINKS.some(function (rx) { return rx.test(path); });
+  }
+  function isLive(el) {
+    if (el.closest('.wf-modal,.wf-pop,.wf-toast,.wf-legend')) return true;
+    if (el.tagName === 'A') return linkLive(el);
+    if (el.matches(SPECIAL_BTNS)) return true;
+    for (var n = el; n && n !== document.body && n !== document.documentElement; n = n.parentElement) if (LIVE.has(n)) return true;
+    return false;
+  }
+  function annotate() {
+    $$('button,a[href],[role=tab],[role=menuitem],[role=button]').forEach(function (el) {
+      var s = isLive(el) ? 'live' : 'dead'; if (el.getAttribute('data-wf-state') !== s) el.setAttribute('data-wf-state', s);
+    });
+  }
+  function initAnnotation() {
+    var st = document.createElement('style'); st.textContent = ANNOT_CSS; document.head.appendChild(st);
+    var on = true; try { on = localStorage.getItem('wf.annot') !== '0'; } catch (e) { }
+    var legend = h('<div class="wf-legend"><span><i style="background:#22c55e"></i>可點擊</span><span><i style="background:#ef4444"></i>無功能／無連結</span><button type="button"></button></div>');
+    var btn = $('button', legend);
+    function paint() { document.body.classList.toggle('wf-annot', on); btn.textContent = on ? '隱藏標示' : '顯示標示'; try { localStorage.setItem('wf.annot', on ? '1' : '0'); } catch (e) { } }
+    btn.onclick = function () { on = !on; paint(); };
+    document.body.appendChild(legend); paint(); annotate();
+    var timer = null;
+    new MutationObserver(function () { clearTimeout(timer); timer = setTimeout(annotate, 40); }).observe(document.body, { childList: true, subtree: true });
+  }
+
   /* ---------- boot ---------- */
   function boot() {
     initChrome(); initComboboxes(); initDateTime();
     try { ({ home: initHome, timeslots: initTimeslots, daysystem: initDaySystem, newevent: initNewEvent, editevent: initNewEvent, timetable: initTimetable, importcenter: initImportCenter }[PAGE] || function () { })(); } catch (err) { console.error('[wireframe]', err); }
+    initAnnotation();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
