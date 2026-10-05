@@ -768,18 +768,26 @@
 
   /* ---------- page: student profile (學業 tab: 學科預測 filters) ---------- */
   function initStudent() {
-    var card = $('[data-testid=subject-forecast]'), rows = $$('[data-forecast-body] tr', card), cbs = $$('[data-filter]', card);
-    function apply() {
-      var v = {}; cbs.forEach(function (c) { v[c.getAttribute('data-filter')] = c.getAttribute('data-value'); });
-      rows.forEach(function (r) {
-        var ok = v['年度'] === 'all' || r.getAttribute('data-y') === v['年度'];
-        r.style.display = ok ? '' : 'none';
+    /* filter cards: each combobox [data-filter=key] filters the rows whose data-f contains key=value */
+    $$('[data-fcard]').forEach(function (card) {
+      var rows = $$('tbody tr', card), cbs = $$('[data-filter]', card);
+      function apply() {
+        var v = {}; cbs.forEach(function (c) { v[c.getAttribute('data-filter')] = c.getAttribute('data-value'); });
+        rows.forEach(function (r) {
+          var f = '|' + r.getAttribute('data-f') + '|';
+          r.style.display = Object.keys(v).every(function (k) { return v[k] === 'all' || f.indexOf('|' + k + '=' + v[k] + '|') >= 0; }) ? '' : 'none';
+        });
+      }
+      cbs.forEach(function (c) { c.addEventListener('wf:change', apply); });
+    });
+    /* 學業 and 活動及獎項 are the working tabs (green); the others have no feature (red) */
+    var tabs = $$('button', $('[data-wf-student-tabs]')), ON = 'bg-white text-slate-900 shadow-sm', OFF = 'text-slate-500 hover:text-slate-700';
+    tabs.forEach(function (b) {
+      var name = b.textContent.trim(), panel = $('[data-wf-panel="' + name + '"]'); if (!panel) return;
+      b.addEventListener('click', function () {
+        $$('[data-wf-panel]').forEach(function (p) { p.style.display = p === panel ? '' : 'none'; });
+        tabs.forEach(function (t) { var on = t === b; t.className = t.className.replace(ON, '').replace(OFF, '').replace(/\s+$/, '') + ' ' + (on ? ON : OFF); });
       });
-    }
-    cbs.forEach(function (c) { c.addEventListener('wf:change', apply); });
-    /* 學業 is the only working tab (green); the others have no feature (red) */
-    $$('button', $('[data-wf-student-tabs]')).forEach(function (b) {
-      if (b.textContent.trim() === '學業') b.addEventListener('click', function () { card.scrollIntoView({ behavior: 'smooth' }); });
     });
   }
 
