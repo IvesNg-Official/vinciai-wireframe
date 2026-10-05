@@ -20,10 +20,14 @@
     '/calendar/day-system': 'calendar-day-system.html',
     '/calendar/new': 'calendar-new.html',
     '/lms/timetable': 'lms-timetable.html',
-    '/management/import-center': 'management-import-center.html'
+    '/management/import-center': 'management-import-center.html',
+    '/lms': 'lms.html',
+    '/lms/classes/2': 'lms-classes-2.html',
+    '/lms/teaching-insights': 'teaching-insights.html',
+    '/lms/classes/2/students/21': 'student-tse-wing-sze.html'
   };
   var file = decodeURIComponent(location.pathname.split('/').pop() || '');
-  var PAGE = { 'index.html': 'home', 'home.html': 'home', '': 'home', 'management-timeslots.html': 'timeslots', 'calendar-day-system.html': 'daysystem', 'calendar-new.html': 'newevent', 'calendar-edit.html': 'editevent', 'lms-timetable.html': 'timetable', 'management-import-center.html': 'importcenter' }[file] || '';
+  var PAGE = { 'index.html': 'home', 'home.html': 'home', '': 'home', 'management-timeslots.html': 'timeslots', 'calendar-day-system.html': 'daysystem', 'calendar-new.html': 'newevent', 'calendar-edit.html': 'editevent', 'lms-timetable.html': 'timetable', 'management-import-center.html': 'importcenter', 'lms.html': 'lms', 'lms-classes-2.html': 'lms', 'teaching-insights.html': 'insights', 'student-tse-wing-sze.html': 'student', 'discipline-record-analysis.html': 'discipline' }[file] || '';
 
   /* ---------- helpers ---------- */
   function h(html) { var t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstChild; }
@@ -135,6 +139,8 @@
       var cal = $('a[href="/calendar"]', aside);
       if (cal && (PAGE === 'daysystem' || PAGE === 'newevent')) cal.classList.add('wf-active');
       var home = $('a[href="/"]', aside); if (home && PAGE === 'home') home.classList.add('wf-active');
+      var here = $('a[href="' + file + '"]', aside); if (here) here.classList.add('wf-active');
+      var cc = $('a[href="/lms"]', aside); if (cc && (PAGE === 'lms' || PAGE === 'insights' || PAGE === 'student') && file !== 'discipline-record-analysis.html') cc.classList.add('wf-active');
       var tt = $('[data-testid=nav-timetable]', aside); if (tt && PAGE === 'timetable') tt.classList.add('wf-active');
     }
     var toggle = $('[data-testid=nav-toggle]');
@@ -614,6 +620,169 @@
     });
   }
 
+  /* minimal .xlsx writer (stored zip, inline strings) */
+  function makeXlsx(rows, sheetName) {   // makeXlsx(rows, name) for one sheet, or makeXlsx([{ name, rows }, ...]) for several
+    var sheets = sheetName === undefined && rows.length && rows[0].rows ? rows : [{ name: sheetName, rows: rows }];
+    var enc = new TextEncoder(), crcT = [], i, j, c;
+    for (i = 0; i < 256; i++) { c = i; for (j = 0; j < 8; j++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; crcT[i] = c >>> 0; }
+    function crc(b) { var x = 0xFFFFFFFF; for (var k = 0; k < b.length; k++) x = crcT[(x ^ b[k]) & 255] ^ (x >>> 8); return (x ^ 0xFFFFFFFF) >>> 0; }
+    function col(n) { var s = ''; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; }
+    var XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    function sheetXml(rows) {
+      return XML + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + rows.map(function (r, ri) {
+        return '<row r="' + (ri + 1) + '">' + r.map(function (v, ci) {
+          var ref = col(ci) + (ri + 1);
+          return typeof v === 'number' ? '<c r="' + ref + '"><v>' + v + '</v></c>' : '<c r="' + ref + '" t="inlineStr"><is><t>' + esc(v) + '</t></is></c>';
+        }).join('') + '</row>';
+      }).join('') + '</sheetData></worksheet>';
+    }
+    var files = [
+      ['[Content_Types].xml', XML + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' + sheets.map(function (s, k) { return '<Override PartName="/xl/worksheets/sheet' + (k + 1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'; }).join('') + '</Types>'],
+      ['_rels/.rels', XML + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', XML + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map(function (s, k) { return '<sheet name="' + esc(s.name) + '" sheetId="' + (k + 1) + '" r:id="rId' + (k + 1) + '"/>'; }).join('') + '</sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels', XML + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheets.map(function (s, k) { return '<Relationship Id="rId' + (k + 1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (k + 1) + '.xml"/>'; }).join('') + '</Relationships>']
+    ];
+    sheets.forEach(function (s, k) { files.push(['xl/worksheets/sheet' + (k + 1) + '.xml', sheetXml(s.rows)]); });
+    var parts = [], central = [], off = 0;
+    function u16(n) { return [n & 255, (n >> 8) & 255]; }
+    function u32(n) { return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]; }
+    files.forEach(function (fl) {
+      var nm = enc.encode(fl[0]), d = enc.encode(fl[1]), cr = crc(d);
+      var lh = [].concat([0x50, 0x4b, 3, 4], u16(20), u16(0x800), u16(0), u16(0), u16(0x21), u32(cr), u32(d.length), u32(d.length), u16(nm.length), u16(0));
+      parts.push(new Uint8Array(lh), nm, d);
+      central.push(new Uint8Array([].concat([0x50, 0x4b, 1, 2], u16(20), u16(20), u16(0x800), u16(0), u16(0), u16(0x21), u32(cr), u32(d.length), u32(d.length), u16(nm.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(off))), nm);
+      off += lh.length + nm.length + d.length;
+    });
+    var csz = central.reduce(function (a, b) { return a + b.length; }, 0);
+    var end = new Uint8Array([].concat([0x50, 0x4b, 5, 6], u16(0), u16(0), u16(files.length), u16(files.length), u32(csz), u32(off), u16(0)));
+    return new Blob(parts.concat(central, [end]), { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+
+  /* HAS table: HAS rule (5**+5* >= 2, or 5** >= 2), filter HAS / non-HAS, sort by column (asc → desc → original order), reset, export xlsx */
+  function initHasTable(root) {
+    var body = $('[data-testid=has-table] tbody', root), rows = $$('tr', body), filter = $('[data-has-filter]', root), n2 = $('[data-has-n2]', root), n1 = $('[data-has-n1]', root), count = $('[data-has-count]', root),
+      desc = $('[data-has-desc]', root), sorts = $$('[data-has-sort]', root), sort = { col: -1, dir: 0 };
+    function num(r, c) { return parseFloat(r.cells[c].textContent) || 0; }
+    function lim(inp) { return Math.max(0, parseInt(inp.value, 10) || 0); }
+    function isHas(r) { return num(r, 6) >= lim(n2) && num(r, 6) + num(r, 7) >= lim(n1); }
+    /* per-student 學科預測 detail (demo data, consistent with the No of 5** / 5* / 5 / 4 / 3 / 2 columns) */
+    var POOL = ['Chinese Language', 'English Language', 'Mathematics', 'Geography', 'History', 'Physics', 'Biology', 'Chemistry'],
+      TEACH = ['陳嘉敏老師', '李國輝老師', '何志偉老師', '黃詠怡老師', '張子軒老師', '林曉彤老師', '馮國強老師', '羅雅婷老師'],
+      HEAD = ['鄭美玲老師', '吳家豪老師', '許偉倫老師', '周德明老師', '梁淑儀老師', '蔡永康老師', '朱啟文老師', '譚慧珊老師'],
+      LV = [['5**', 94], ['5*', 85], ['5', 75], ['4', 65], ['3', 55], ['2', 45]];
+    var CNAME = { 'TSE WING SZE': '謝穎詩', 'KO MAN KIT': '高文傑', 'LEUNG HOI YAN': '梁凱欣', 'MAK CHI HANG': '麥智恒', 'POON YUK LAM': '潘玉琳', 'AU YEUNG TSZ KIN': '歐陽子堅', 'TAM LOK SZE': '譚樂詩', 'SIN KAR WING': '單嘉榮', 'FUNG MING HEI': '馮明希', 'TONG SHUK YEE': '唐淑怡' };
+    function hashName(s) { var x = 7; for (var i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) % 100003; return x; }
+    function detailData(r) {
+      var levels = [], off = hashName(r._name) % POOL.length;
+      [6, 7, 8, 9, 10, 11].forEach(function (c, i) { for (var k = 0; k < num(r, c); k++) levels.push(LV[i]); });
+      var N = Math.min(POOL.length, Math.max(num(r, 5), levels.length));
+      while (levels.length < N) levels.push(LV[4]);
+      return levels.slice(0, N).map(function (lv, i) {
+        var s = (i + off) % POOL.length, pct = lv[1] + ((hashName(r._name + s) % 7) - 3), big = s < 2;
+        return { s: s, lv: lv[0], score: +(big ? pct * 1.5 : pct).toFixed(2), big: big, rank: 1 + Math.round((100 - pct) * 0.6) };
+      });
+    }
+    function detailHtml(r, ncol) {
+      var td = '<td class="px-4 py-2.5 text-slate-700">', th = '<th class="px-4 py-2.5">';
+      var body = detailData(r).map(function (d) {
+        var s = d.s, tot = d.score.toFixed(2) + (d.big ? ' (150)' : '');
+        return '<tr class="hover:bg-slate-50/50">' + td + '2026-2027</td>' + td + 'Annual</td>' + td + 'Annual Grade</td>' + td + POOL[s] + '</td>' + td + TEACH[s] + '</td>' + td + HEAD[s] + '</td>' + td + tot + '</td>' + td + '<span class="font-semibold text-indigo-600">' + d.lv + '</span></td>' + td + d.rank + '</td></tr>';
+      }).join('');
+      return '<td colspan="' + ncol + '" class="bg-slate-50/60 px-5 py-4"><div class="mb-2 text-sm font-semibold text-slate-700">學科預測 — ' + esc(r._name) + '</div><div class="overflow-x-auto rounded-xl border border-slate-100 bg-white"><table class="w-full text-sm"><thead><tr class="border-b border-slate-100 bg-slate-50/80 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">' +
+        ['年度', '學期', '評核', '學科', '任教老師', '科主任', '總分', '預測等級', '級名次'].map(function (x) { return th + x + '</th>'; }).join('') + '</tr></thead><tbody class="divide-y divide-slate-50">' + body + '</tbody></table></div><p class="mt-2 text-xs text-slate-500">只列出有分數的學科；中文科及英文科總分為 150。（示範資料）</p></td>';
+    }
+    var ncol = $$('thead th', root).length;
+    $$('thead th', root).forEach(function (th) { th.style.position = 'sticky'; th.style.top = '0'; th.style.zIndex = '1'; th.style.background = '#f8fafc'; });
+    rows.forEach(function (r) {
+      r._name = r.cells[2].firstChild.textContent.trim(); r._cls = r.cells[0].textContent.trim(); r._open = false;
+      r._detail = h('<tr class="wf-has-detail" style="display:none">' + detailHtml(r, ncol) + '</tr>');
+      var arrow = h('<button type="button" data-has-expand title="展開學科預測" aria-expanded="false" class="mr-2 rounded px-1 text-xs text-slate-500 hover:text-indigo-600">&#9656;</button>');
+      if (r._name !== 'TSE WING SZE') { arrow.title = '此學生暫無學科預測'; arrow.style.cursor = 'not-allowed'; arrow.removeAttribute('aria-expanded'); r._detail = h('<tr style="display:none"></tr>'); r._detail._off = true; }
+      else arrow.addEventListener('click', function () { r._open = !r._open; arrow.innerHTML = r._open ? '&#9662;' : '&#9656;'; arrow.setAttribute('aria-expanded', r._open); render(); });
+      r.cells[0].insertBefore(arrow, r.cells[0].firstChild);
+    });
+    function render() {
+      var list = rows.slice(), f = filter.value, total = 0;
+      if (sort.dir) list.sort(function (a, b) { return sort.dir * (parseFloat(a.cells[sort.col].textContent) - parseFloat(b.cells[sort.col].textContent)); });
+      var n = 0;
+      list.forEach(function (r) {
+        var has = isHas(r), show = f === 'all' || (f === 'has' ? has : !has);
+        r.cells[2].innerHTML = (r._name === 'TSE WING SZE' ? '<a href="student-tse-wing-sze.html" class="font-medium text-indigo-700 underline">' + esc(r._name) + '</a>' : '<span role="button" class="font-medium">' + esc(r._name) + '</span>') + (has ? ' <span class="ml-1 font-semibold text-indigo-600" data-has="1">(HAS)</span>' : '');
+        r._has = has; if (has) total++;
+        r.style.display = show ? '' : 'none'; if (show) n++; body.appendChild(r);
+        r._detail.style.display = show && r._open ? '' : 'none'; body.appendChild(r._detail);
+      });
+      desc.textContent = 'HAS 條件：5** 至少 ' + lim(n2) + ' 科，且 5* 與 5** 合共至少 ' + lim(n1) + ' 科。以下為示範用虛構資料。（共 ' + rows.length + ' 人，符合 HAS：' + total + ' 人）';
+      sorts.forEach(function (b) {
+        var on = +b.getAttribute('data-has-sort') === sort.col && sort.dir;
+        b.innerHTML = on ? (sort.dir > 0 ? '&#9650;' : '&#9660;') : '&#8645;';
+        b.style.color = on ? '#4f46e5' : '';
+      });
+      count.textContent = '顯示 ' + n + ' / ' + rows.length + ' 人';
+    }
+    sorts.forEach(function (b) {
+      b.addEventListener('click', function () {
+        var c = +b.getAttribute('data-has-sort');
+        if (sort.col !== c) sort = { col: c, dir: 1 }; else sort.dir = sort.dir === 1 ? -1 : sort.dir === -1 ? 0 : 1;
+        render();
+      });
+    });
+    filter.addEventListener('change', render);
+    n2.addEventListener('input', render); n1.addEventListener('input', render);
+    $('[data-has-reset]', root).addEventListener('click', function () { filter.value = 'all'; n2.value = 0; n1.value = 2; sort = { col: -1, dir: 0 }; render(); });
+    $('[data-has-export]', root).addEventListener('click', function () {
+      /* school format: 4 class cols, name, then score / Predict / Rank per subject (POOL index → column), then totals; only TSE WING SZE has data */
+      var SC = [['中文(150)', 'Chi', 0], ['英文(150)', 'Eng', 1], ['數學', 'Math', 2], ['公社', 'CSD'], ['生物', 'Bio', 6], ['文學', 'CL'], ['BAFS', 'BA'], ['地理', 'Geo', 3], ['物理', 'Phy', 5],
+        ['視藝', 'VA'], ['中史', 'CHist', 4], ['經濟', 'Econ'], ['電腦', 'ICT'], ['化學', 'Chem', 7], ['旅款', 'THS'], ['M2', 'M2'], ['音樂', 'Mus']];
+      var head = ['2025-2026班別', '班號', 'Name', '中文姓名'];
+      SC.forEach(function (c) { head.push(c[0], 'Predict\n(' + c[1] + ')', 'Rank'); });
+      head = head.concat(['Grand Avg', 'RANK', 'No of sub', 'No of 5**', 'No of 5*', 'No of 5', 'No of 4', 'No of 3', 'No of 2 or below', 'Language \nfail', 'HAS']);
+      var data = [head];
+      $$('tr', body).filter(function (r) { return r._name !== undefined && r.style.display !== 'none'; }).forEach(function (r) {
+        var tse = r._name === 'TSE WING SZE', byS = {}; if (tse) detailData(r).forEach(function (d) { byS[d.s] = d; });
+        var row = [r._cls, r.cells[1].textContent.trim(), r._name, CNAME[r._name] || ''];
+        SC.forEach(function (c) { var d = c[2] === undefined ? null : byS[c[2]]; if (d) row.push(d.score, d.lv, d.rank); else row.push('', '', ''); });
+        for (var c = 3; c <= 12; c++) { var v = r.cells[c].textContent.trim(); row.push(v !== '' && !isNaN(v) ? parseFloat(v) : v); }
+        row.push(r._has ? 'HAS' : ''); data.push(row);
+      });
+      var url = URL.createObjectURL(makeXlsx(data, 'HAS')), a = document.createElement('a');
+      a.href = url; a.download = 'HAS_選生.xlsx'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      toast('已匯出 ' + (data.length - 1) + ' 位學生的 Excel', true);
+    });
+    render();
+  }
+
+  /* ---------- page: teaching insights (tabs incl. 拔尖（HAS）選生) ---------- */
+  function initInsights() {
+    var host = $('[data-wf-tab-panels]'), bar = $$('main button').filter(function (b) { return b.textContent.trim() === '概覽'; })[0].parentElement, wrap = bar.parentElement;
+    var tabs = $$('button', bar), ON = tabs[0].className, OFF = tabs[1].className;
+    function show(name) {
+      tabs.forEach(function (b) { b.className = b.textContent.trim() === name ? ON : OFF; });
+      var t = $('template[data-wf-tab="' + name + '"]', host), html = t ? t.innerHTML : '<div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"><h3 class="text-sm font-semibold text-slate-800">' + esc(name) + '</h3><p class="mt-2 text-sm text-slate-500">（線框圖）此分頁內容待設計。</p></div>';
+      var cur = host.nextElementSibling, node = h(html); if (cur) cur.replaceWith(node); else host.after(node);
+      if ($('[data-testid=has-table]', node)) initHasTable(node);
+    }
+    tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.textContent.trim()); }); });
+  }
+
+  /* ---------- page: student profile (學業 tab: 學科預測 filters) ---------- */
+  function initStudent() {
+    var card = $('[data-testid=subject-forecast]'), rows = $$('[data-forecast-body] tr', card), cbs = $$('[data-filter]', card);
+    function apply() {
+      var v = {}; cbs.forEach(function (c) { v[c.getAttribute('data-filter')] = c.getAttribute('data-value'); });
+      rows.forEach(function (r) {
+        var ok = v['年度'] === 'all' || r.getAttribute('data-y') === v['年度'];
+        r.style.display = ok ? '' : 'none';
+      });
+    }
+    cbs.forEach(function (c) { c.addEventListener('wf:change', apply); });
+    /* 學業 is the only working tab (green); the others have no feature (red) */
+    $$('button', $('[data-wf-student-tabs]')).forEach(function (b) {
+      if (b.textContent.trim() === '學業') b.addEventListener('click', function () { card.scrollIntoView({ behavior: 'smooth' }); });
+    });
+  }
+
   /* ---------- page: home (AI chat) ---------- */  function initHome() {
     var input = $('input[placeholder^=向助手]'), form = input.closest('form'), panel = $('div.w-72'), welcome = $$('div').filter(function (d) { return /max-w-2xl/.test(d.className) && d.textContent.indexOf('午安') >= 0; })[0],
       area = welcome.parentElement, thread = h('<div style="width:100%;max-width:42rem;display:none;flex-direction:column;gap:12px"></div>');
@@ -730,8 +899,9 @@
   /* ---------- boot ---------- */
   function boot() {
     initChrome(); initComboboxes(); initDateTime();
-    try { ({ home: initHome, timeslots: initTimeslots, daysystem: initDaySystem, newevent: initNewEvent, editevent: initNewEvent, timetable: initTimetable, importcenter: initImportCenter }[PAGE] || function () { })(); } catch (err) { console.error('[wireframe]', err); }
+    try { ({ home: initHome, timeslots: initTimeslots, daysystem: initDaySystem, newevent: initNewEvent, editevent: initNewEvent, timetable: initTimetable, importcenter: initImportCenter, insights: initInsights, student: initStudent }[PAGE] || function () { })(); } catch (err) { console.error('[wireframe]', err); }
     initAnnotation();
   }
+  window.WF = { makeXlsx: makeXlsx, toast: toast, modal: modal, confirmBox: confirmBox, h: h, esc: esc, $: $, $$: $$, val: val, pad: pad };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
