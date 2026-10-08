@@ -753,7 +753,7 @@
     render();
   }
 
-  /* ---------- page: teaching insights (tabs incl. 拔尖（HAS）選生) ---------- */
+  /* ---------- page: teaching insights (tabs incl. 拔尖選生) ---------- */
   function initInsights() {
     var host = $('[data-wf-tab-panels]'), bar = $$('main button').filter(function (b) { return b.textContent.trim() === '概覽'; })[0].parentElement, wrap = bar.parentElement;
     var tabs = $$('button', bar), ON = tabs[0].className, OFF = tabs[1].className;
